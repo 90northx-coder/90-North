@@ -1,0 +1,6 @@
+{
+  "name": "المدار — مبوبة الإعلانات",
+  "description": "منصة إعلانات مبوبة عربية للبيع والشراء والعقارات والمركبات والأجهزة بواجهة منظمة وحفظ دائم.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

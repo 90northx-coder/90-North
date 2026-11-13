@@ -1,0 +1,267 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global safety net: default deny all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isAdmin() {
+      return isVerifiedUser() && (
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        request.auth.token.email == '90northx@gmail.com'
+      );
+    }
+
+    function isValidCategory(cat) {
+      return cat in ['real_estate', 'vehicles', 'electronics', 'furniture', 'appliances', 'fashion', 'services'];
+    }
+
+    function isValidCity(city) {
+      return city in ['riyadh', 'jeddah', 'dammam', 'makkah', 'madinah', 'khobar', 'abha', 'other'];
+    }
+
+    function isValidCondition(cond) {
+      return cond in ['new', 'like_new', 'good', 'fair', 'not_applicable'];
+    }
+
+    function isValidCurrency(curr) {
+      return curr in ['SAR', 'AED', 'USD'];
+    }
+
+    function isValidListingStatus(status) {
+      return status in ['active', 'sold', 'paused'];
+    }
+
+    function isValidListing(data) {
+      return data.keys().hasAll([
+        'ownerId', 'sellerName', 'title', 'description',
+        'category', 'city', 'condition', 'price', 'currency',
+        'negotiable', 'imageUrl', 'status', 'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'ownerId', 'sellerName', 'title', 'description',
+        'category', 'city', 'district', 'condition', 'price', 'currency',
+        'negotiable', 'imageUrl', 'status', 'createdAt', 'updatedAt'
+      ]) &&
+      isValidId(data.ownerId) &&
+      data.sellerName is string && data.sellerName.size() >= 2 && data.sellerName.size() <= 80 &&
+      data.title is string && data.title.size() >= 4 && data.title.size() <= 120 &&
+      data.description is string && data.description.size() >= 10 && data.description.size() <= 2000 &&
+      isValidCategory(data.category) &&
+      isValidCity(data.city) &&
+      (!('district' in data) || (data.district is string && data.district.size() <= 60)) &&
+      isValidCondition(data.condition) &&
+      (data.price is int || data.price is float) && data.price >= 0 && data.price <= 100000000 &&
+      isValidCurrency(data.currency) &&
+      data.negotiable is bool &&
+      data.imageUrl is string && data.imageUrl.size() <= 250000 &&
+      isValidListingStatus(data.status) &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    function isValidFavorite(data, userId, listingId) {
+      return data.keys().hasAll(['userId', 'listingId', 'createdAt']) &&
+      data.keys().hasOnly(['userId', 'listingId', 'createdAt']) &&
+      isValidId(data.userId) && data.userId == userId &&
+      isValidId(data.listingId) && data.listingId == listingId &&
+      data.createdAt is timestamp;
+    }
+
+    function isValidPrivateProfile(data, userId) {
+      return data.keys().hasAll(['userId', 'displayName', 'defaultCity', 'updatedAt']) &&
+      data.keys().hasOnly(['userId', 'displayName', 'defaultCity', 'phone', 'updatedAt']) &&
+      isValidId(data.userId) && data.userId == userId &&
+      data.displayName is string && data.displayName.size() >= 2 && data.displayName.size() <= 80 &&
+      isValidCity(data.defaultCity) &&
+      (!('phone' in data) || (data.phone is string && data.phone.size() <= 30)) &&
+      data.updatedAt is timestamp;
+    }
+
+    function isValidInquiryStatus(status) {
+      return status in ['open', 'replied', 'closed'];
+    }
+
+    function isValidInquiry(data) {
+      return data.keys().hasAll([
+        'listingId', 'listingTitle', 'sellerId', 'buyerId',
+        'buyerName', 'message', 'status', 'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'listingId', 'listingTitle', 'sellerId', 'buyerId',
+        'buyerName', 'message', 'offerPrice', 'status', 'sellerReply',
+        'createdAt', 'updatedAt'
+      ]) &&
+      isValidId(data.listingId) &&
+      data.listingTitle is string && data.listingTitle.size() >= 1 && data.listingTitle.size() <= 120 &&
+      isValidId(data.sellerId) &&
+      isValidId(data.buyerId) &&
+      data.buyerName is string && data.buyerName.size() >= 2 && data.buyerName.size() <= 80 &&
+      data.message is string && data.message.size() >= 2 && data.message.size() <= 1000 &&
+      (!('offerPrice' in data) || ((data.offerPrice is int || data.offerPrice is float) && data.offerPrice >= 0 && data.offerPrice <= 100000000)) &&
+      isValidInquiryStatus(data.status) &&
+      (!('sellerReply' in data) || (data.sellerReply is string && data.sellerReply.size() >= 1 && data.sellerReply.size() <= 1000)) &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    match /admins/{adminId} {
+      allow read, write: if false;
+    }
+
+    match /listings/{listingId} {
+      allow get: if isValidId(listingId) && (
+        existing().status == 'active' ||
+        (isSignedIn() && existing().ownerId == request.auth.uid) ||
+        isAdmin()
+      );
+
+      allow list: if existing().status == 'active' ||
+        (isSignedIn() && existing().ownerId == request.auth.uid);
+
+      allow create: if isVerifiedUser() &&
+        isValidId(listingId) &&
+        isValidListing(incoming()) &&
+        incoming().ownerId == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+
+      allow update: if isVerifiedUser() &&
+        isValidId(listingId) &&
+        isValidListing(incoming()) &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          isAdmin() ||
+          (
+            existing().ownerId == request.auth.uid && (
+              incoming().diff(existing()).affectedKeys().hasOnly([
+                'title', 'description', 'category', 'city', 'district',
+                'condition', 'price', 'currency', 'negotiable', 'imageUrl',
+                'status', 'sellerName', 'updatedAt'
+              ]) ||
+              incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
+            )
+          )
+        );
+
+      allow delete: if isVerifiedUser() &&
+        isValidId(listingId) &&
+        (existing().ownerId == request.auth.uid || isAdmin());
+    }
+
+    match /users/{userId} {
+      allow read, write: if false;
+
+      match /favorites/{listingId} {
+        allow get: if isSignedIn() && isValidId(userId) && isValidId(listingId) && request.auth.uid == userId;
+        allow list: if isSignedIn() && request.auth.uid == userId && existing().userId == request.auth.uid;
+        allow create: if isVerifiedUser() &&
+          isValidId(userId) &&
+          isValidId(listingId) &&
+          request.auth.uid == userId &&
+          isValidFavorite(incoming(), userId, listingId) &&
+          incoming().createdAt == request.time;
+        allow update: if false;
+        allow delete: if isSignedIn() && isValidId(userId) && isValidId(listingId) && request.auth.uid == userId;
+      }
+
+      match /private/{docId} {
+        allow get: if isSignedIn() && isValidId(userId) && isValidId(docId) && request.auth.uid == userId;
+        allow list: if false;
+        allow create: if isVerifiedUser() &&
+          isValidId(userId) &&
+          isValidId(docId) &&
+          docId == 'profile' &&
+          request.auth.uid == userId &&
+          isValidPrivateProfile(incoming(), userId) &&
+          incoming().updatedAt == request.time;
+        allow update: if isVerifiedUser() &&
+          isValidId(userId) &&
+          isValidId(docId) &&
+          docId == 'profile' &&
+          request.auth.uid == userId &&
+          isValidPrivateProfile(incoming(), userId) &&
+          incoming().userId == existing().userId &&
+          incoming().updatedAt == request.time &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'defaultCity', 'phone', 'updatedAt']);
+        allow delete: if false;
+      }
+    }
+
+    match /inquiries/{inquiryId} {
+      allow get: if isSignedIn() && isValidId(inquiryId) && (
+        existing().buyerId == request.auth.uid ||
+        existing().sellerId == request.auth.uid ||
+        isAdmin()
+      );
+
+      allow list: if isSignedIn() && (
+        existing().buyerId == request.auth.uid ||
+        existing().sellerId == request.auth.uid
+      );
+
+      allow create: if isVerifiedUser() &&
+        isValidId(inquiryId) &&
+        isValidInquiry(incoming()) &&
+        incoming().buyerId == request.auth.uid &&
+        incoming().buyerId != incoming().sellerId &&
+        incoming().status == 'open' &&
+        !('sellerReply' in incoming()) &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        exists(/databases/$(database)/documents/listings/$(incoming().listingId)) &&
+        get(/databases/$(database)/documents/listings/$(incoming().listingId)).data.ownerId == incoming().sellerId;
+
+      allow update: if isVerifiedUser() &&
+        isValidId(inquiryId) &&
+        isValidInquiry(incoming()) &&
+        incoming().listingId == existing().listingId &&
+        incoming().sellerId == existing().sellerId &&
+        incoming().buyerId == existing().buyerId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          isAdmin() ||
+          (
+            existing().status != 'closed' && (
+              (
+                existing().sellerId == request.auth.uid &&
+                incoming().status in ['replied', 'closed'] &&
+                incoming().diff(existing()).affectedKeys().hasOnly(['sellerReply', 'status', 'updatedAt'])
+              ) ||
+              (
+                existing().buyerId == request.auth.uid &&
+                incoming().status == 'closed' &&
+                incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
+              )
+            )
+          )
+        );
+
+      allow delete: if isVerifiedUser() &&
+        isValidId(inquiryId) &&
+        (existing().buyerId == request.auth.uid || isAdmin());
+    }
+  }
+}
